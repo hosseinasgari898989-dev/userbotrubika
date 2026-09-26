@@ -606,22 +606,31 @@ async function registerWebhook(env) {
   }
 
   try {
-    const resp = await fetch(`https://botapi.rubika.ir/v3/${token}/updateBotEndpoints`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: webhookUrl, type: 'ReceiveUpdate' })
-    });
+    // Rubika uses separate endpoint types for normal updates and inline-button callbacks.
+    // ReceiveQuery is required for clicks on inline_keypad buttons.
+    const endpointTypes = ['ReceiveUpdate', 'ReceiveQuery', 'ReceiveInlineMessage'];
+    const responses = {};
 
-    const body = await resp.text();
-    let data = body;
-    try { data = JSON.parse(body); } catch (_) {}
+    for (const type of endpointTypes) {
+      const resp = await fetch(`https://botapi.rubika.ir/v3/${token}/updateBotEndpoints`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: webhookUrl, type })
+      });
 
-    if (!resp.ok) {
-      throw new Error(`Rubika webhook registration failed: HTTP ${resp.status} ${body}`);
+      const body = await resp.text();
+      let data = body;
+      try { data = JSON.parse(body); } catch (_) {}
+
+      if (!resp.ok) {
+        throw new Error(`Rubika webhook registration failed for ${type}: HTTP ${resp.status} ${body}`);
+      }
+
+      responses[type] = data;
+      console.log(`Rubika Webhook registered [${type}]:`, webhookUrl, data);
     }
 
-    console.log('Rubika Webhook registered:', webhookUrl, data);
-    return { ok: true, webhookUrl, response: data };
+    return { ok: true, webhookUrl, response: responses };
   } catch (e) {
     console.error('Webhook registration error:', e);
     return { ok: false, webhookUrl, error: e instanceof Error ? e.message : String(e) };
