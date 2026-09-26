@@ -1,3 +1,4 @@
+const BOT_DISABLED = true;
 const OWNER_USER_ID = 'u0IDvZ2084e83846b5024bd495b59114';
 const COOLDOWN_SECONDS = 12 * 60 * 60;
 const CALLBACK_LOCKS = new Map();
@@ -5,6 +6,10 @@ const CALLBACK_LOCK_MS = 2500;
 
 export default {
   async fetch(request, env, ctx) {
+    if (BOT_DISABLED) {
+      return new Response('Bot is temporarily disabled.', { status: 200 });
+    }
+
     const url = new URL(request.url);
 
     if (url.pathname.startsWith('/webhook') && request.method === 'POST') {
@@ -36,6 +41,7 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
+    if (BOT_DISABLED) return;
     ctx.waitUntil(registerWebhook(env));
   }
 };
