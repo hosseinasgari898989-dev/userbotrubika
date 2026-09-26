@@ -1,5 +1,7 @@
 const OWNER_USER_ID = 'u0IDvZ2084e83846b5024bd495b59114';
 const COOLDOWN_SECONDS = 12 * 60 * 60;
+const CALLBACK_LOCKS = new Map();
+const CALLBACK_LOCK_MS = 2500;
 
 export default {
   async fetch(request, env, ctx) {
@@ -142,20 +144,31 @@ async function handleInlineCallback(inlineMessage, token, apiBase) {
 
   if (!chatId || !messageId || !buttonId) return;
 
+  const lockKey = `${chatId}:${messageId}`;
+  const now = Date.now();
+  const previous = CALLBACK_LOCKS.get(lockKey) || 0;
+  if (now - previous < CALLBACK_LOCK_MS) {
+    console.log('Inline callback ignored as duplicate:', { lockKey, buttonId });
+    return;
+  }
+  CALLBACK_LOCKS.set(lockKey, now);
+
   try {
     const chat = await getChatInfo(chatId, token, apiBase);
     const chatType = chat?.type || chat?.chat_type || inferChatType(chatId);
+
+    console.log('Inline callback handling:', { chatId, messageId, senderId, buttonId, chatType });
 
     switch (buttonId) {
       case 'menu_user_info': {
         const userChat = chatType === 'Group' && senderId
           ? await getChatInfo(senderId, token, apiBase)
           : chat;
-        await editMessage(chatId, messageId, await buildUserInfoText(userChat, senderId), userInfoKeypad(), token, apiBase);
+        await editMessage(chatId, messageId, buildUserInfoText(userChat, senderId), userInfoKeypad(), token, apiBase);
         break;
       }
       case 'menu_ids':
-        await editMessage(chatId, messageId, buildIdsText(chat, chatType, senderId, chatId), backKeypad(), token, apiBase);
+        await editMessage(chatId, messageId, buildIdsText(chat, chatType, senderId, chatId, messageId), backKeypad(), token, apiBase);
         break;
       case 'menu_profile':
         await editMessage(chatId, messageId, buildProfileText(chat, chatType), backKeypad(), token, apiBase);
@@ -172,6 +185,12 @@ async function handleInlineCallback(inlineMessage, token, apiBase) {
       case 'menu_about':
         await editMessage(chatId, messageId, buildAboutText(), backKeypad(), token, apiBase);
         break;
+      case 'menu_copy_user_id':
+        await editMessage(chatId, messageId, buildCopyReadyText('**🆔 شناسه کاربری برای کپی**', chat?.user_id || senderId || 'ثبت نشده'), userInfoKeypad(), token, apiBase);
+        break;
+      case 'menu_copy_chat_id':
+        await editMessage(chatId, messageId, buildCopyReadyText('**🆔 شناسه گروه برای کپی**', chatId), groupInfoKeypad(), token, apiBase);
+        break;
       case 'menu_back':
         if (chatType === 'Group') {
           await editMessage(chatId, messageId, buildGroupMenuText(), groupMenuKeypad(), token, apiBase);
@@ -180,13 +199,21 @@ async function handleInlineCallback(inlineMessage, token, apiBase) {
         }
         break;
       default:
+        console.log('Unknown inline button:', buttonId);
         return;
     }
   } catch (e) {
-    console.error('Inline callback error:', e);
+    console.error('Inline callback error:', {
+      chatId,
+      messageId,
+      senderId,
+      buttonId,
+      error: e instanceof Error ? e.message : String(e)
+    });
+  } finally {
+    CALLBACK_LOCKS.delete(lockKey);
   }
 }
-
 async function refreshDisplayedMenu(chatId, messageId, chatType, token, apiBase) {
   const fresh = await getChatInfo(chatId, token, apiBase);
 
@@ -223,6 +250,7 @@ function groupMenuKeypad() {
 function userInfoKeypad() {
   return keypad([
     [simpleButton('menu_profile', '📝 پروفایل بیشتر'), simpleButton('menu_ids', '🆔 شناسه‌ها')],
+    [simpleButton('menu_copy_user_id', '📋 شناسه برای کپی')],
     [simpleButton('menu_back', '↩️ بازگشت')]
   ]);
 }
@@ -230,6 +258,7 @@ function userInfoKeypad() {
 function groupInfoKeypad() {
   return keypad([
     [simpleButton('menu_group_stats', '📊 آمار گروه'), simpleButton('menu_ids', '🆔 شناسه‌ها')],
+    [simpleButton('menu_copy_chat_id', '📋 شناسه گروه برای کپی')],
     [simpleButton('menu_back', '↩️ بازگشت')]
   ]);
 }
