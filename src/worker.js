@@ -211,7 +211,11 @@ async function handleInlineCallback(inlineMessage, token, apiBase) {
       error: e instanceof Error ? e.message : String(e)
     });
   } finally {
-    CALLBACK_LOCKS.delete(lockKey);
+    setTimeout(() => {
+      if (CALLBACK_LOCKS.get(lockKey) === now) {
+        CALLBACK_LOCKS.delete(lockKey);
+      }
+    }, CALLBACK_LOCK_MS);
   }
 }
 async function refreshDisplayedMenu(chatId, messageId, chatType, token, apiBase) {
