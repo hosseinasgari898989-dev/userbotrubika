@@ -57,10 +57,23 @@ async function handleUpdate(update, env, request) {
   const chatId = update.chat_id || message.chat_id;
   const userId = message.sender_id || update.sender_id;
   const text = message.text || '';
-  const chatType =
+
+  // chat_type همیشه در Webhook وجود ندارد؛ در صورت نیاز از اطلاعات خود چت می‌خوانیم.
+  let chatType =
     message.chat_type ||
     update.chat_type ||
-    (chatId && userId && chatId === userId ? 'User' : 'Group');
+    null;
+
+  let chatInfo = {};
+  if (chatId && !chatType) {
+    chatInfo = await getChatInfo(chatId, BOT_TOKEN, API_BASE);
+    chatType =
+      chatInfo.type ||
+      chatInfo.chat_type ||
+      chatInfo.chat?.type ||
+      chatInfo.chat?.chat_type ||
+      null;
+  }
 
   // ==================== شروع ربات در چت خصوصی ====================
   if (update.type === 'StartedBot' && chatId) {
@@ -73,24 +86,32 @@ async function handleUpdate(update, env, request) {
     return;
   }
 
-  // ==================== دستور /start در چت خصوصی ====================
-  if (text === '/start' && chatType === 'User') {
-    const senderInfo = await getUserInfo(userId, BOT_TOKEN, API_BASE);
+  // ==================== دستور /start ====================
+  if (text.trim().toLowerCase() === '/start') {
+    // پاسخ به /start نباید به تشخیص ناقص chat_type وابسته باشد.
+    await sendMessage(
+      chatId,
+      'اطلاعات شما با موفقیت ذخیره شد. ✅',
+      BOT_TOKEN,
+      API_BASE
+    );
 
-    // ذخیره اطلاعات کاربر در دیتابیس
-    await db.prepare(
-      `INSERT OR REPLACE INTO users (user_id, username, first_name, last_name, ip_address, created_at)
-       VALUES (?, ?, ?, ?, ?, datetime('now'))`
-    ).bind(
-      userId,
-      senderInfo.username || '',
-      senderInfo.first_name || '',
-      senderInfo.last_name || '',
-      request.headers.get('CF-Connecting-IP') || 'unknown'
-    ).run();
+    // اطلاعات کاربر فقط در چت خصوصی ذخیره می‌شود.
+    if (chatType === 'User' || chatType === 'Private') {
+      const senderInfo = await getUserInfo(userId, BOT_TOKEN, API_BASE);
 
-    // ارسال پیام تأیید (فقط یک بار)
-    await sendMessage(chatId, 'اطلاعات شما با موفقیت ذخیره شد. ✅', BOT_TOKEN, API_BASE);
+      await db.prepare(
+        `INSERT OR REPLACE INTO users (user_id, username, first_name, last_name, ip_address, created_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))`
+      ).bind(
+        userId,
+        senderInfo.username || '',
+        senderInfo.first_name || '',
+        senderInfo.last_name || '',
+        request.headers.get('CF-Connecting-IP') || 'unknown'
+      ).run();
+    }
+
     return;
   }
 
