@@ -299,93 +299,132 @@ async function buildUserInfoText(chat, senderId) {
   const savedUserId = chat?.user_id || senderId || 'ثبت نشده';
   const fullName = [chat?.first_name, chat?.last_name].filter(Boolean).join(' ') || 'ثبت نشده';
   const username = chat?.username ? `@${String(chat.username).replace(/^@/, '')}` : 'ندارد';
+  const chatId = chat?.chat_id || chat?.guid || 'ثبت نشده';
+  const chatType = chat?.type || chat?.chat_type || 'User';
+  const bio = chat?.bio || chat?.about || 'ثبت نشده';
 
   return [
-    '**👤 اطلاعات کاربری**',
+    '**👤 اطلاعات کامل کاربر**',
     '',
+    '━━━ 👤 هویت ━━━',
     `**نام کامل:** ${fullName}`,
     `**نام کوچک:** ${chat?.first_name || 'ثبت نشده'}`,
     `**نام خانوادگی:** ${chat?.last_name || 'ثبت نشده'}`,
+    '',
+    '━━━ 📛 حساب ━━━',
     `**نام کاربری:** ${username}`,
-    `**شناسه کاربری:** ${savedUserId}`,
-    `**نوع چت:** ${chat?.type || chat?.chat_type || 'User'}`
+    `**user_id:** ${savedUserId}`,
+    `**chat_id:** ${chatId}`,
+    '',
+    '━━━ 📝 پروفایل ━━━',
+    `**درباره من:** ${bio}`,
+    `**نوع چت:** ${chatType}`,
+    `**sender_id:** ${senderId || savedUserId}`,
+    '',
+    '__اطلاعات فقط از داده‌های در دسترس Rubika نمایش داده شده‌اند.__'
   ].join('\n');
 }
-
-function buildIdsText(chat, chatType, senderId, currentChatId) {
+function buildIdsText(chat, chatType, senderId, currentChatId, messageId) {
   const userId = chatType === 'Group' ? (senderId || 'ثبت نشده') : (chat?.user_id || senderId || 'ثبت نشده');
   const chatId = currentChatId || chat?.chat_id || chat?.guid || 'از API برنگشته';
 
   return [
-    '**🆔 شناسه‌ها و اطلاعات فنی**',
+    '**🆔 شناسه‌ها و مشخصات فنی**',
     '',
-    `**شناسه این چت:** ${chatId}`,
-    `**شناسه کاربر شما:** ${userId}`,
-    `**نوع:** ${chatType}`,
+    `**user_id:** ${userId}`,
+    `**chat_id:** ${chatId}`,
+    `**sender_id:** ${senderId || 'ثبت نشده'}`,
+    `**message_id:** ${messageId || 'ثبت نشده'}`,
+    `**نوع چت:** ${chatType}`,
     '',
-    '__این بخش فقط داده‌هایی را نمایش می‌دهد که خود Rubika در اختیار ربات گذاشته است.__'
+    '__این صفحه مخصوص شناسه‌ها و داده‌های فنی است تا هر شناسه فقط یک‌جا کاربرد اصلی خودش را داشته باشد.__'
   ].join('\n');
 }
-
 function buildProfileText(chat, chatType) {
   const bio = chat?.bio || chat?.about || 'ثبت نشده';
   const username = chat?.username ? `@${String(chat.username).replace(/^@/, '')}` : 'ندارد';
+  const chatId = chat?.chat_id || chat?.guid || 'ثبت نشده';
 
   if (chatType === 'Group') {
     return [
-      '**📝 اطلاعات تکمیلی گروه**',
+      '**📝 پروفایل و مشخصات گروه**',
       '',
+      '━━━ 👥 مشخصات ━━━',
+      `**نام گروه:** ${chat?.title || chat?.name || 'ثبت نشده'}`,
       `**نام کاربری:** ${username}`,
-      `**توضیحات:** ${chat?.description || bio}`,
+      `**شناسه گروه:** ${chatId}`,
+      '',
+      '━━━ 🔐 وضعیت ━━━',
       `**مالک:** ${chat?.owner_id || chat?.owner_user_id || 'نامشخص'}`,
       `**عمومی:** ${typeof chat?.is_public === 'boolean' ? (chat.is_public ? 'بله' : 'خیر') : 'نامشخص'}`,
+      `**توضیحات:** ${chat?.description || bio}`,
       `**لینک:** ${chat?.link || chat?.invite_link || 'ندارد'}`
     ].join('\n');
   }
 
   return [
-    '**📝 پروفایل بیشتر**',
+    '**📝 پروفایل کامل‌تر**',
     '',
+    `**نام:** ${[chat?.first_name, chat?.last_name].filter(Boolean).join(' ') || 'ثبت نشده'}`,
     `**نام کاربری:** ${username}`,
     `**درباره من:** ${bio}`,
-    `**شناسه:** ${chat?.user_id || 'ثبت نشده'}`
+    `**user_id:** ${chat?.user_id || 'ثبت نشده'}`,
+    `**chat_id:** ${chatId}`
   ].join('\n');
 }
-
 function buildGroupInfoText(chat, chatId) {
   const username = chat?.username || chat?.username_handle || '';
   const description = chat?.description || chat?.about || 'ثبت نشده';
   const ownerId = chat?.owner_id || chat?.owner_user_id || 'نامشخص';
   const memberCount = chat?.member_count ?? chat?.members_count ?? chat?.count_members ?? chat?.participants_count ?? 'نامشخص';
   const isPublic = typeof chat?.is_public === 'boolean' ? (chat.is_public ? 'بله' : 'خیر') : 'نامشخص';
+  const chatType = chat?.type || chat?.chat_type || 'Group';
 
   return [
     '**👥 اطلاعات کامل گروه**',
     '',
-    `**نام:** ${chat?.title || chat?.name || 'ثبت نشده'}`,
-    `**شناسه گروه:** ${chat?.chat_id || chatId}`,
+    '━━━ 🏷 مشخصات اصلی ━━━',
+    `**نام گروه:** ${chat?.title || chat?.name || 'ثبت نشده'}`,
     `**نام کاربری:** ${username ? '@' + String(username).replace(/^@/, '') : 'ندارد'}`,
+    `**شناسه گروه:** ${chat?.chat_id || chatId}`,
+    '',
+    '━━━ 📊 وضعیت ━━━',
     `**تعداد اعضا:** ${memberCount}`,
-    `**شناسه مالک:** ${ownerId}`,
+    `**نوع چت:** ${chatType}`,
     `**عمومی:** ${isPublic}`,
+    '',
+    '━━━ 🔐 مدیریت ━━━',
+    `**شناسه مالک:** ${ownerId}`,
     `**توضیحات:** ${description}`,
     `**لینک:** ${chat?.link || chat?.invite_link || 'ندارد'}`
   ].join('\n');
 }
-
 function buildGroupStatsText(chat, chatId) {
   const memberCount = chat?.member_count ?? chat?.members_count ?? chat?.count_members ?? chat?.participants_count ?? 'نامشخص';
-
+  const chatType = chat?.type || chat?.chat_type || 'Group';
+  const ownerId = chat?.owner_id || chat?.owner_user_id || 'نامشخص';
   return [
-    '**📊 آمار گروه**',
+    '**📊 آمار و وضعیت گروه**',
     '',
-    `**اعضای گزارش‌شده توسط API:** ${memberCount}`,
-    `**شناسه گروه:** ${chat?.chat_id || chatId}`,
+    `**👥 تعداد اعضای گزارش‌شده:** ${memberCount}`,
+    `**🆔 شناسه گروه:** ${chat?.chat_id || chatId}`,
+    `**👑 شناسه مالک:** ${ownerId}`,
+    `**🧩 نوع چت:** ${chatType}`,
+    `**🌐 عمومی:** ${typeof chat?.is_public === 'boolean' ? (chat.is_public ? 'بله' : 'خیر') : 'نامشخص'}`,
     '',
-    '__ربات برای این بخش هیچ عضو دیگری را اسکن یا جمع‌آوری نمی‌کند؛ فقط اطلاعاتی را نشان می‌دهد که خود API برمی‌گرداند.__'
+    '__ربات برای این بخش هیچ عضو دیگری را اسکن نمی‌کند؛ فقط دادهٔ گزارش‌شده توسط API را نشان می‌دهد.__'
   ].join('\n');
 }
 
+function buildCopyReadyText(title, value) {
+  return [
+    title,
+    '',
+    `\`\`\`${value}\`\`\``,
+    '',
+    '__متن بالا عمداً ساده نمایش داده شده تا انتخاب و کپی کردنش راحت باشد.__'
+  ].join('\n');
+}
 function buildAboutText() {
   return [
     '**🤖 درباره ربات**',
