@@ -567,6 +567,12 @@ async function editMessage(chatId, messageId, text, inlineKeypad, token, apiBase
     payload.metadata = { meta_data_parts: parsed.metadataParts };
   }
 
+  if (inlineKeypad) {
+    // Rubika-compatible clients may accept the keypad together with the text edit.
+    // This avoids the visible remove/add flicker caused by two separate edits.
+    payload.inline_keypad = inlineKeypad;
+  }
+
   const textResp = await fetch(`${apiBase}/editMessageText`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -574,30 +580,77 @@ async function editMessage(chatId, messageId, text, inlineKeypad, token, apiBase
   });
 
   const textBody = await textResp.text();
-  if (!textResp.ok) {
+  let textData = null;
+  try { textData = JSON.parse(textBody); } catch (_) {}
+
+  console.log('editMessageText result:', {
+    chatId,
+    messageId,
+    ok: textResp.ok,
+    status: textResp.status,
+    body: textBody.slice(0, 600)
+  });
+
+  if (textResp.ok && textData?.status !== 'ERROR') {
+    return true;
+  }
+
+  if (!inlineKeypad) {
     throw new Error(`editMessageText failed: HTTP ${textResp.status} ${textBody}`);
   }
 
-  if (inlineKeypad) {
-    const keypadResp = await fetch(`${apiBase}/editMessageKeypad`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        message_id: messageId,
-        inline_keypad: inlineKeypad
-      })
-    });
+  // Fallback for API versions that reject inline_keypad on editMessageText.
+  const retryResp = await fetch(`${apiBase}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      text: parsed.text,
+      ...(parsed.metadataParts.length ? { metadata: { meta_data_parts: parsed.metadataParts } } : {})
+    })
+  });
+  const retryBody = await retryResp.text();
+  let retryData = null;
+  try { retryData = JSON.parse(retryBody); } catch (_) {}
+  console.log('editMessageText fallback result:', {
+    chatId,
+    messageId,
+    ok: retryResp.ok,
+    status: retryResp.status,
+    body: retryBody.slice(0, 600)
+  });
 
-    const keypadBody = await keypadResp.text();
-    if (!keypadResp.ok) {
-      throw new Error(`editMessageKeypad failed: HTTP ${keypadResp.status} ${keypadBody}`);
-    }
+  if (!retryResp.ok || retryData?.status === 'ERROR') {
+    throw new Error(`editMessageText failed: HTTP ${retryResp.status} ${retryBody}`);
+  }
+
+  const keypadResp = await fetch(`${apiBase}/editMessageKeypad`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      inline_keypad: inlineKeypad
+    })
+  });
+  const keypadBody = await keypadResp.text();
+  let keypadData = null;
+  try { keypadData = JSON.parse(keypadBody); } catch (_) {}
+  console.log('editMessageKeypad fallback result:', {
+    chatId,
+    messageId,
+    ok: keypadResp.ok,
+    status: keypadResp.status,
+    body: keypadBody.slice(0, 600)
+  });
+
+  if (!keypadResp.ok || keypadData?.status === 'ERROR') {
+    throw new Error(`editMessageKeypad failed: HTTP ${keypadResp.status} ${keypadBody}`);
   }
 
   return true;
 }
-
 async function ensureRequestStateTable(db) {
   await db.prepare(
     `CREATE TABLE IF NOT EXISTS bot_request_state (
