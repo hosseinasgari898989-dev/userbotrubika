@@ -6,7 +6,7 @@ export default {
     if (url.pathname === '/webhook' && request.method === 'POST') {
       try {
         const update = await request.json();
-        await handleUpdate(update, env);
+        await handleUpdate(update, env, request);
         return new Response('OK', { status: 200 });
       } catch (e) {
         console.error('Webhook error:', e);
@@ -16,6 +16,8 @@ export default {
 
     // بررسی سلامت (Health Check)
     if (url.pathname === '/health') {
+      // ثبت خودکار Webhook با استفاده از Secret موجود در Cloudflare.
+      ctx.waitUntil(registerWebhook(env));
       return new Response('OK', { status: 200 });
     }
 
@@ -24,32 +26,37 @@ export default {
 
   // Cron Trigger برای بیدار نگه داشتن Worker
   async scheduled(event, env, ctx) {
-    console.log('Cron keep-alive triggered at:', new Date().toISOString());
-    // ارسال یک درخواست به خود Worker برای فعال نگه داشتن آن
-    ctx.waitUntil(
-      fetch('https://YOUR-WORKER-NAME.YOUR-SUBDOMAIN.workers.dev/health')
-    );
+    // هر ۱۰ دقیقه Webhook را دوباره ثبت/تأیید می‌کنیم تا اتصال ربات پایدار بماند.
+    ctx.waitUntil(registerWebhook(env));
   }
 };
 
-async function handleUpdate(update, env) {
+async function handleUpdate(update, env, request) {
   const db = env.DB;
   const BOT_TOKEN = env.RUBIKA_TOKEN;
   const API_BASE = 'https://botapi.rubika.ir/v1';
 
-  // استخراج اطلاعات پیام
-  const message = update.message || update.edited_message;
+  // روبیکا در Webhookهای جدید، پیام را داخل new_message/edited_message
+  // و chat_id را در سطح خود Update ارسال می‌کند؛ ساختار قدیمی هم پشتیبانی می‌شود.
+  const message =
+    update.message ||
+    update.new_message ||
+    update.edited_message;
+
   if (!message) return;
 
-  const chatId = message.chat_id;
-  const userId = message.sender_id;
+  const chatId = update.chat_id || message.chat_id;
+  const userId = message.sender_id || update.sender_id;
   const text = message.text || '';
-  const chatType = message.chat_type; // 'User', 'Group', 'Channel'
+  const chatType =
+    message.chat_type ||
+    update.chat_type ||
+    (chatId && userId && chatId === userId ? 'User' : 'Group');
 
   // ==================== دستور /start در چت خصوصی ====================
   if (text === '/start' && chatType === 'User') {
     const senderInfo = await getUserInfo(userId, BOT_TOKEN, API_BASE);
-    
+
     // ذخیره اطلاعات کاربر در دیتابیس
     await db.prepare(
       `INSERT OR REPLACE INTO users (user_id, username, first_name, last_name, ip_address, created_at)
@@ -71,7 +78,7 @@ async function handleUpdate(update, env) {
   if (chatType === 'Group') {
     // ذخیره اطلاعات گروه
     const groupInfo = await getChatInfo(chatId, BOT_TOKEN, API_BASE);
-    
+
     await db.prepare(
       `INSERT OR REPLACE INTO groups (group_id, group_name, member_count, created_at)
        VALUES (?, ?, ?, datetime('now'))`
@@ -137,6 +144,39 @@ async function getChatMembers(chatId, token, apiBase) {
   } catch (e) {
     console.error('getChatMembers error:', e);
     return [];
+  }
+}
+
+async function registerWebhook(env) {
+  const token = env.RUBIKA_TOKEN;
+  const webhookUrl =
+    env.WEBHOOK_URL ||
+    'https://userbotrubika.hosseinasgari898989.workers.dev/webhook';
+
+  if (!token) {
+    console.error('Webhook registration skipped: RUBIKA_TOKEN secret is missing.');
+    return;
+  }
+
+  try {
+    const resp = await fetch('https://botapi.rubika.ir/v1/updateBotEndpoints', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token,
+        url: webhookUrl,
+        type: 'ReceiveUpdate'
+      })
+    });
+
+    const body = await resp.text();
+    if (!resp.ok) {
+      throw new Error(`Rubika webhook registration failed: HTTP ${resp.status} ${body}`);
+    }
+
+    console.log('Rubika Webhook registered:', webhookUrl);
+  } catch (e) {
+    console.error('Webhook registration error:', e);
   }
 }
 
