@@ -243,7 +243,7 @@ async function getChatMembers(chatId, token, apiBase) {
     const resp = await fetch(`${apiBase}/getChatMembers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, chat_id: chatId })
+      body: JSON.stringify({ chat_id: chatId })
     });
     const data = await resp.json();
     return data.result?.members || [];
