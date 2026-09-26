@@ -606,9 +606,15 @@ async function registerWebhook(env) {
   }
 
   try {
-    // Rubika uses separate endpoint types for normal updates and inline-button callbacks.
-    // ReceiveQuery is required for clicks on inline_keypad buttons.
-    const endpointTypes = ['ReceiveUpdate', 'ReceiveQuery', 'ReceiveInlineMessage'];
+    // Match the endpoint set used by the Rubka reference library exactly.
+    // These include normal updates, inline callbacks, and selection-related events.
+    const endpointTypes = [
+      'ReceiveUpdate',
+      'ReceiveInlineMessage',
+      'ReceiveQuery',
+      'GetSelectionItem',
+      'SearchSelectionItems'
+    ];
     const responses = {};
 
     for (const type of endpointTypes) {
