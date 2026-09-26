@@ -135,9 +135,13 @@ async function handleInlineCallback(inlineMessage, token, apiBase) {
     const chatType = chat?.type || chat?.chat_type || inferChatType(chatId);
 
     switch (buttonId) {
-      case 'menu_user_info':
-        await editMessage(chatId, messageId, await buildUserInfoText(chat, senderId), userInfoKeypad(), token, apiBase);
+      case 'menu_user_info': {
+        const userChat = chatType === 'Group' && senderId
+          ? await getChatInfo(senderId, token, apiBase)
+          : chat;
+        await editMessage(chatId, messageId, await buildUserInfoText(userChat, senderId), userInfoKeypad(), token, apiBase);
         break;
+      }
       case 'menu_ids':
         await editMessage(chatId, messageId, buildIdsText(chat, chatType, senderId), backKeypad(), token, apiBase);
         break;
