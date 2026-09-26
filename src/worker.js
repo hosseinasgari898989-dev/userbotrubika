@@ -5,13 +5,23 @@ export default {
     // دریافت پیام‌های روبیکا (Webhook)
     if (url.pathname === '/webhook' && request.method === 'POST') {
       try {
-        const update = await request.json();
+        const payload = await request.json();
+        const update = payload?.update || payload;
         await handleUpdate(update, env, request);
         return new Response('OK', { status: 200 });
       } catch (e) {
         console.error('Webhook error:', e);
         return new Response('Internal Error', { status: 500 });
       }
+    }
+
+    // ثبت/بررسی Webhook
+    if (url.pathname === '/setup') {
+      const result = await registerWebhook(env);
+      return new Response(JSON.stringify(result), {
+        status: result.ok ? 200 : 500,
+        headers: { 'Content-Type': 'application/json; charset=utf-8' }
+      });
     }
 
     // بررسی سلامت (Health Check)
@@ -34,16 +44,15 @@ export default {
 async function handleUpdate(update, env, request) {
   const db = env.DB;
   const BOT_TOKEN = env.RUBIKA_TOKEN;
-  const API_BASE = 'https://botapi.rubika.ir/v1';
+  const API_BASE = `https://botapi.rubika.ir/v3/${BOT_TOKEN}`;
 
   // روبیکا در Webhookهای جدید، پیام را داخل new_message/edited_message
   // و chat_id را در سطح خود Update ارسال می‌کند؛ ساختار قدیمی هم پشتیبانی می‌شود.
   const message =
     update.message ||
     update.new_message ||
-    update.edited_message;
-
-  if (!message) return;
+    update.edited_message ||
+    {};
 
   const chatId = update.chat_id || message.chat_id;
   const userId = message.sender_id || update.sender_id;
@@ -52,6 +61,17 @@ async function handleUpdate(update, env, request) {
     message.chat_type ||
     update.chat_type ||
     (chatId && userId && chatId === userId ? 'User' : 'Group');
+
+  // ==================== شروع ربات در چت خصوصی ====================
+  if (update.type === 'StartedBot' && chatId) {
+    await sendMessage(
+      chatId,
+      'سلام 👋 ربات با موفقیت فعال شد. ✅',
+      BOT_TOKEN,
+      API_BASE
+    );
+    return;
+  }
 
   // ==================== دستور /start در چت خصوصی ====================
   if (text === '/start' && chatType === 'User') {
@@ -154,12 +174,16 @@ async function registerWebhook(env) {
     'https://userbotrubika.hosseinasgari898989.workers.dev/webhook';
 
   if (!token) {
-    console.error('Webhook registration skipped: RUBIKA_TOKEN secret is missing.');
-    return;
+    const result = {
+      ok: false,
+      error: 'RUBIKA_TOKEN secret is missing.'
+    };
+    console.error('Webhook registration skipped:', result.error);
+    return result;
   }
 
   try {
-    const resp = await fetch('https://botapi.rubika.ir/v1/updateBotEndpoints', {
+    const resp = await fetch(`https://botapi.rubika.ir/v3/${token}/updateBotEndpoints`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -170,13 +194,28 @@ async function registerWebhook(env) {
     });
 
     const body = await resp.text();
+    let data = body;
+    try {
+      data = JSON.parse(body);
+    } catch (_) {}
+
     if (!resp.ok) {
       throw new Error(`Rubika webhook registration failed: HTTP ${resp.status} ${body}`);
     }
 
-    console.log('Rubika Webhook registered:', webhookUrl);
+    console.log('Rubika Webhook registered:', webhookUrl, data);
+    return {
+      ok: true,
+      webhookUrl,
+      response: data
+    };
   } catch (e) {
     console.error('Webhook registration error:', e);
+    return {
+      ok: false,
+      webhookUrl,
+      error: e instanceof Error ? e.message : String(e)
+    };
   }
 }
 
