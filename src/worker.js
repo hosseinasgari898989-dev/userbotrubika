@@ -143,7 +143,7 @@ async function handleInlineCallback(inlineMessage, token, apiBase) {
         break;
       }
       case 'menu_ids':
-        await editMessage(chatId, messageId, buildIdsText(chat, chatType, senderId), backKeypad(), token, apiBase);
+        await editMessage(chatId, messageId, buildIdsText(chat, chatType, senderId, chatId), backKeypad(), token, apiBase);
         break;
       case 'menu_profile':
         await editMessage(chatId, messageId, buildProfileText(chat, chatType), backKeypad(), token, apiBase);
@@ -271,9 +271,9 @@ async function buildUserInfoText(chat, senderId) {
   ].join('\n');
 }
 
-function buildIdsText(chat, chatType, senderId) {
+function buildIdsText(chat, chatType, senderId, currentChatId) {
   const userId = chatType === 'Group' ? (senderId || 'ثبت نشده') : (chat?.user_id || senderId || 'ثبت نشده');
-  const chatId = chat?.chat_id || chat?.guid || 'از API برنگشته';
+  const chatId = currentChatId || chat?.chat_id || chat?.guid || 'از API برنگشته';
 
   return [
     '**🆔 شناسه‌ها و اطلاعات فنی**',
