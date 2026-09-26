@@ -1,5 +1,5 @@
 name = "userbotrubika"
-main = "src/index.js"
+main = "src/worker.js"
 compatibility_date = "2026-09-26"
 
 [[d1_databases]]
