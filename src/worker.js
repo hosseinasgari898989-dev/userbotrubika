@@ -46,8 +46,6 @@ async function handleUpdate(update, env, request) {
   const BOT_TOKEN = env.RUBIKA_TOKEN;
   const API_BASE = `https://botapi.rubika.ir/v3/${BOT_TOKEN}`;
 
-  // روبیکا در Webhookهای جدید، پیام را داخل new_message/edited_message
-  // و chat_id را در سطح خود Update ارسال می‌کند؛ ساختار قدیمی هم پشتیبانی می‌شود.
   const message =
     update.message ||
     update.new_message ||
@@ -56,16 +54,19 @@ async function handleUpdate(update, env, request) {
 
   const chatId = update.chat_id || message.chat_id;
   const userId = message.sender_id || update.sender_id;
-  const text = message.text || '';
+  const text = (message.text || '').trim();
+  const command = text.toLowerCase();
 
-  // chat_type همیشه در Webhook وجود ندارد؛ در صورت نیاز از اطلاعات خود چت می‌خوانیم.
+  if (!chatId) return;
+
+  // نوع چت را فقط هنگام پردازش دستور مشخص می‌کنیم.
   let chatType =
     message.chat_type ||
     update.chat_type ||
     null;
 
   let chatInfo = {};
-  if (chatId && !chatType) {
+  if (!chatType) {
     chatInfo = await getChatInfo(chatId, BOT_TOKEN, API_BASE);
     chatType =
       chatInfo.type ||
@@ -75,110 +76,185 @@ async function handleUpdate(update, env, request) {
       null;
   }
 
-  // ==================== شروع ربات در چت خصوصی ====================
-  if (update.type === 'StartedBot' && chatId) {
-    await sendMessage(
-      chatId,
-      'سلام 👋 ربات با موفقیت فعال شد. ✅',
-      BOT_TOKEN,
-      API_BASE
-    );
-    return;
-  }
+  // StartedBot را معادل اولین /start در نظر می‌گیریم.
+  const isStart = command === '/start' || update.type === 'StartedBot';
+  const isAgain = command === '/again';
 
-  // ==================== دستور /start ====================
-  if (text.trim().toLowerCase() === '/start') {
-    if (!chatId || !userId) {
-      console.error('Start command missing chatId/userId.', { chatId, userId });
+  if (!isStart && !isAgain) return;
+
+  try {
+    await ensureRequestStateTable(db);
+
+    const state = await getRequestState(db, chatId);
+
+    // /start فقط یک بار در تمام عمر این چت پاسخ داده می‌شود.
+    if (isStart) {
+      if (state) return;
+
+      if (chatType === 'Group') {
+        await sendInitialGroupInfo(db, chatId, chatInfo, BOT_TOKEN, API_BASE);
+      } else {
+        await sendInitialUserInfo(db, chatId, userId, BOT_TOKEN, API_BASE);
+      }
+
+      await createRequestState(db, chatId);
       return;
     }
 
-    try {
-      // اول اطلاعات واقعی کاربر را از Rubika می‌گیریم.
-      const senderInfo = await getUserInfo(userId, BOT_TOKEN, API_BASE);
+    // /again فقط پس از ۱۲ ساعت کامل مجاز است.
+    if (!state) return;
 
-      if (!senderInfo || !senderInfo.user_id) {
-        throw new Error('Rubika returned no valid user information.');
-      }
+    const now = Math.floor(Date.now() / 1000);
+    const lastRequestAt = state.last_again_at || state.started_at || 0;
+    const cooldownSeconds = 12 * 60 * 60;
 
-      // سپس اطلاعات را در D1 ذخیره می‌کنیم.
-      // IP واقعی عمداً ذخیره نمی‌شود.
-      await db.prepare(
-        `INSERT OR REPLACE INTO users
-         (user_id, username, first_name, last_name, ip_address, created_at)
-         VALUES (?, ?, ?, ?, ?, datetime('now'))`
-      ).bind(
-        userId,
-        senderInfo.username || '',
-        senderInfo.first_name || '',
-        senderInfo.last_name || '',
-        'unknown'
-      ).run();
+    if (now - lastRequestAt < cooldownSeconds) {
+      return;
+    }
 
-      const fullName =
-        [senderInfo.first_name, senderInfo.last_name]
-          .filter(Boolean)
-          .join(' ') || 'نام ثبت نشده';
+    if (chatType === 'Group') {
+      await sendAgainGroupInfo(db, chatId, chatInfo, BOT_TOKEN, API_BASE);
+    } else {
+      await sendAgainUserInfo(db, chatId, userId, BOT_TOKEN, API_BASE);
+    }
 
-      const username = senderInfo.username
-        ? `@${senderInfo.username}`
-        : 'ندارد';
+    await markAgainRequest(db, chatId, now);
+  } catch (e) {
+    console.error('Update processing error:', e);
 
-      const infoMessage =
-        `✅ اطلاعات شما با موفقیت ذخیره شد.
+    // فقط در تلاش واقعی برای شروع اولیه، خطا را به کاربر اعلام می‌کنیم.
+    // /startهای بعدی و /againهای زودهنگام عمداً بی‌پاسخ می‌مانند.
+    if (isStart) {
+      await sendMessage(
+        chatId,
+        '❌ دریافت اطلاعات انجام نشد. لطفاً چند لحظه بعد دوباره /start را بفرستید.',
+        BOT_TOKEN,
+        API_BASE
+      );
+    }
+  }
+}
+
+// ==================== توابع کمکی ====================
+
+async function ensureRequestStateTable(db) {
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS bot_request_state (
+      chat_id TEXT PRIMARY KEY,
+      started_at INTEGER NOT NULL,
+      last_again_at INTEGER
+    )`
+  ).run();
+}
+
+async function getRequestState(db, chatId) {
+  const result = await db.prepare(
+    `SELECT chat_id, started_at, last_again_at
+     FROM bot_request_state
+     WHERE chat_id = ?`
+  ).bind(chatId).first();
+
+  return result || null;
+}
+
+async function createRequestState(db, chatId) {
+  const now = Math.floor(Date.now() / 1000);
+
+  await db.prepare(
+    `INSERT OR IGNORE INTO bot_request_state
+     (chat_id, started_at, last_again_at)
+     VALUES (?, ?, NULL)`
+  ).bind(chatId, now).run();
+}
+
+async function markAgainRequest(db, chatId, now) {
+  await db.prepare(
+    `UPDATE bot_request_state
+     SET last_again_at = ?
+     WHERE chat_id = ?`
+  ).bind(now, chatId).run();
+}
+
+async function sendInitialUserInfo(db, chatId, userId, token, apiBase) {
+  if (!userId) {
+    throw new Error('Private chat is missing sender_id.');
+  }
+
+  const senderInfo = await getUserInfo(userId, token, apiBase);
+
+  await db.prepare(
+    `INSERT OR REPLACE INTO users
+     (user_id, username, first_name, last_name, ip_address, created_at)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))`
+  ).bind(
+    userId,
+    senderInfo.username || '',
+    senderInfo.first_name || '',
+    senderInfo.last_name || '',
+    'unknown'
+  ).run();
+
+  const fullName =
+    [senderInfo.first_name, senderInfo.last_name]
+      .filter(Boolean)
+      .join(' ') || 'نام ثبت نشده';
+
+  const username = senderInfo.username
+    ? `@${senderInfo.username}`
+    : 'ندارد';
+
+  const message =
+    `✅ اطلاعات شما:
 
 👤 نام: ${fullName}
 📛 نام کاربری: ${username}
 🆔 شناسه کاربری: ${senderInfo.user_id}`;
 
-      const sent = await sendMessage(chatId, infoMessage, BOT_TOKEN, API_BASE);
-
-      if (!sent) {
-        console.error('User data was saved, but confirmation message could not be sent.');
-      }
-
-      return;
-    } catch (e) {
-      console.error('Start processing error:', e);
-
-      await sendMessage(
-        chatId,
-        '❌ دریافت یا ذخیره اطلاعات شما ناموفق بود. لطفاً دوباره /start را ارسال کنید.',
-        BOT_TOKEN,
-        API_BASE
-      );
-
-      return;
-    }
-  }
-
-  // ==================== عضویت در گروه ====================
-  if (chatType === 'Group') {
-    // ذخیره اطلاعات گروه
-    const groupInfo = await getChatInfo(chatId, BOT_TOKEN, API_BASE);
-
-    await db.prepare(
-      `INSERT OR REPLACE INTO groups (group_id, group_name, member_count, created_at)
-       VALUES (?, ?, ?, datetime('now'))`
-    ).bind(chatId, groupInfo.title || 'Unknown', groupInfo.member_count || 0).run();
-
-    // دریافت و ذخیره اعضای گروه (نمونه - نیاز به پیاده‌سازی کامل دارد)
-    const members = await getChatMembers(chatId, BOT_TOKEN, API_BASE);
-    for (const member of members) {
-      await db.prepare(
-        `INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)`
-      ).bind(chatId, member.user_id).run();
-    }
-
-    console.log(`گروه ${chatId} با ${members.length} عضو ذخیره شد.`);
-    // در گروه‌ها هیچ پیامی ارسال نمی‌شود
-    return;
-  }
-
-  // سایر پیام‌ها نادیده گرفته می‌شوند
+  const sent = await sendMessage(chatId, message, token, apiBase);
+  if (!sent) throw new Error('Failed to send private user information.');
 }
 
-// ==================== توابع کمکی ====================
+async function sendAgainUserInfo(db, chatId, userId, token, apiBase) {
+  await sendInitialUserInfo(db, chatId, userId, token, apiBase);
+}
+
+async function sendInitialGroupInfo(db, chatId, chatInfo, token, apiBase) {
+  const freshGroupInfo = await getChatInfo(chatId, token, apiBase);
+
+  const title =
+    freshGroupInfo.title ||
+    freshGroupInfo.name ||
+    'نام گروه ثبت نشده';
+
+  const memberCount =
+    freshGroupInfo.member_count ??
+    freshGroupInfo.members_count ??
+    0;
+
+  await db.prepare(
+    `INSERT OR REPLACE INTO groups
+     (group_id, group_name, member_count, created_at)
+     VALUES (?, ?, ?, datetime('now'))`
+  ).bind(
+    chatId,
+    title,
+    Number(memberCount) || 0
+  ).run();
+
+  const message =
+    `✅ اطلاعات گروه:
+
+👥 نام گروه: ${title}
+🆔 شناسه گروه: ${chatId}
+👤 تعداد اعضا: ${Number(memberCount) || 0}`;
+
+  const sent = await sendMessage(chatId, message, token, apiBase);
+  if (!sent) throw new Error('Failed to send group information.');
+}
+
+async function sendAgainGroupInfo(db, chatId, chatInfo, token, apiBase) {
+  await sendInitialGroupInfo(db, chatId, chatInfo, token, apiBase);
+}
 
 async function getUserInfo(userId, token, apiBase) {
   if (!userId) {
@@ -224,33 +300,31 @@ async function getUserInfo(userId, token, apiBase) {
 }
 
 async function getChatInfo(chatId, token, apiBase) {
-  try {
-    const resp = await fetch(`${apiBase}/getChatInfo`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId })
-    });
-    const data = await resp.json();
-    return data.result?.chat || {};
-  } catch (e) {
-    console.error('getChatInfo error:', e);
-    return {};
-  }
-}
+  if (!chatId) throw new Error('Missing chatId.');
 
-async function getChatMembers(chatId, token, apiBase) {
+  const resp = await fetch(`${apiBase}/getChatInfo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId })
+  });
+
+  const bodyText = await resp.text();
+
+  let data;
   try {
-    const resp = await fetch(`${apiBase}/getChatMembers`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId })
-    });
-    const data = await resp.json();
-    return data.result?.members || [];
-  } catch (e) {
-    console.error('getChatMembers error:', e);
-    return [];
+    data = JSON.parse(bodyText);
+  } catch (_) {
+    throw new Error(`Invalid Rubika getChatInfo response: HTTP ${resp.status}`);
   }
+
+  if (!resp.ok) {
+    throw new Error(
+      `Rubika getChatInfo failed: HTTP ${resp.status} ${bodyText}`
+    );
+  }
+
+  const payload = data?.data || data?.result || data;
+  return payload?.chat || payload || {};
 }
 
 async function registerWebhook(env) {
@@ -273,7 +347,6 @@ async function registerWebhook(env) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        token,
         url: webhookUrl,
         type: 'ReceiveUpdate'
       })
