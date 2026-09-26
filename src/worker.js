@@ -5,11 +5,11 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    if (url.pathname === '/webhook' && request.method === 'POST') {
+    if (url.pathname.startsWith('/webhook') && request.method === 'POST') {
       try {
         const payload = await request.json();
         const update = payload?.update || payload;
-        await handleUpdate(update, env);
+        await handleUpdate(update, env, request);
         return new Response('OK', { status: 200 });
       } catch (e) {
         console.error('Webhook error:', e);
@@ -38,7 +38,14 @@ export default {
   }
 };
 
-async function handleUpdate(update, env) {
+async function handleUpdate(update, env, request) {
+  console.log('Rubika webhook update received:', {
+    path: new URL(request.url).pathname,
+    type: update?.type || null,
+    hasInlineMessage: !!update?.inline_message,
+    buttonId: update?.inline_message?.aux_data?.button_id || null
+  });
+
   const db = env.DB;
   const token = env.RUBIKA_TOKEN;
   const apiBase = `https://botapi.rubika.ir/v3/${token}`;
@@ -608,20 +615,22 @@ async function registerWebhook(env) {
   try {
     // Match the endpoint set used by the Rubka reference library exactly.
     // These include normal updates, inline callbacks, and selection-related events.
-    const endpointTypes = [
-      'ReceiveUpdate',
-      'ReceiveInlineMessage',
-      'ReceiveQuery',
-      'GetSelectionItem',
-      'SearchSelectionItems'
-    ];
+    const endpointPaths = {
+      ReceiveUpdate: '/webhook',
+      ReceiveInlineMessage: '/webhook/inline',
+      ReceiveQuery: '/webhook/query',
+      GetSelectionItem: '/webhook/selection',
+      SearchSelectionItems: '/webhook/search'
+    };
     const responses = {};
 
-    for (const type of endpointTypes) {
+    for (const [type, path] of Object.entries(endpointPaths)) {
+      const endpointUrl = new URL(path, webhookUrl).toString();
+
       const resp = await fetch(`https://botapi.rubika.ir/v3/${token}/updateBotEndpoints`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: webhookUrl, type })
+        body: JSON.stringify({ url: endpointUrl, type })
       });
 
       const body = await resp.text();
@@ -632,8 +641,8 @@ async function registerWebhook(env) {
         throw new Error(`Rubika webhook registration failed for ${type}: HTTP ${resp.status} ${body}`);
       }
 
-      responses[type] = data;
-      console.log(`Rubika Webhook registered [${type}]:`, webhookUrl, data);
+      responses[type] = { endpointUrl, response: data };
+      console.log(`Rubika Webhook registered [${type}]:`, endpointUrl, data);
     }
 
     return { ok: true, webhookUrl, response: responses };
