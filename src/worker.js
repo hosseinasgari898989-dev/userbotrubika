@@ -43,9 +43,14 @@ async function handleUpdate(update, env) {
   const token = env.RUBIKA_TOKEN;
   const apiBase = `https://botapi.rubika.ir/v3/${token}`;
 
-  // Rubika sends inline-button clicks as ReceiveQuery.
-  if (update?.type === 'ReceiveQuery' && update.inline_message) {
-    await handleInlineCallback(update.inline_message, token, apiBase);
+  // Rubika can deliver inline-button clicks through ReceiveUpdate/inline_message.
+  // Some clients/libraries also expose the same payload as ReceiveQuery.
+  const inlineMessage =
+    update?.inline_message ||
+    (update?.type === 'ReceiveQuery' ? update?.inline_message : null);
+
+  if (inlineMessage) {
+    await handleInlineCallback(inlineMessage, token, apiBase);
     return;
   }
 
