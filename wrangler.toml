@@ -7,5 +7,5 @@ binding = "DB"
 database_name = "get-id-user"
 database_id = "196a6684-8031-4b55-b794-3acc0b933f77"
 
-[triggers]
+[triggers] 
 crons = ["*/10 * * * *"]
