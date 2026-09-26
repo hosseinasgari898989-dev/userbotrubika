@@ -59,23 +59,6 @@ async function handleUpdate(update, env, request) {
 
   if (!chatId) return;
 
-  // نوع چت را فقط هنگام پردازش دستور مشخص می‌کنیم.
-  let chatType =
-    message.chat_type ||
-    update.chat_type ||
-    null;
-
-  let chatInfo = {};
-  if (!chatType) {
-    chatInfo = await getChatInfo(chatId, BOT_TOKEN, API_BASE);
-    chatType =
-      chatInfo.type ||
-      chatInfo.chat_type ||
-      chatInfo.chat?.type ||
-      chatInfo.chat?.chat_type ||
-      null;
-  }
-
   // StartedBot را معادل اولین /start در نظر می‌گیریم.
   const isStart = command === '/start' || update.type === 'StartedBot';
   const isAgain = command === '/again';
@@ -87,10 +70,40 @@ async function handleUpdate(update, env, request) {
 
     const state = await getRequestState(db, chatId);
 
-    // /start فقط یک بار در تمام عمر این چت پاسخ داده می‌شود.
-    if (isStart) {
-      if (state) return;
+    // /start تکراری باید کاملاً بی‌پاسخ باشد؛ حتی API اطلاعات چت هم صدا زده نشود.
+    if (isStart && state) return;
 
+    // /again فقط برای چتی مجاز است که قبلاً /start شده باشد.
+    if (isAgain) {
+      if (!state) return;
+
+      const now = Math.floor(Date.now() / 1000);
+      const lastRequestAt = state.last_again_at || state.started_at || 0;
+      const cooldownSeconds = 12 * 60 * 60;
+
+      if (now - lastRequestAt < cooldownSeconds) {
+        return;
+      }
+    }
+
+    // فقط وقتی درخواست واقعاً مجاز است، نوع چت را تشخیص بده.
+    let chatType =
+      message.chat_type ||
+      update.chat_type ||
+      null;
+
+    let chatInfo = {};
+    if (!chatType) {
+      chatInfo = await getChatInfo(chatId, BOT_TOKEN, API_BASE);
+      chatType =
+        chatInfo.type ||
+        chatInfo.chat_type ||
+        chatInfo.chat?.type ||
+        chatInfo.chat?.chat_type ||
+        null;
+    }
+
+    if (isStart) {
       if (chatType === 'Group') {
         await sendInitialGroupInfo(db, chatId, chatInfo, BOT_TOKEN, API_BASE);
       } else {
@@ -101,16 +114,7 @@ async function handleUpdate(update, env, request) {
       return;
     }
 
-    // /again فقط پس از ۱۲ ساعت کامل مجاز است.
-    if (!state) return;
-
     const now = Math.floor(Date.now() / 1000);
-    const lastRequestAt = state.last_again_at || state.started_at || 0;
-    const cooldownSeconds = 12 * 60 * 60;
-
-    if (now - lastRequestAt < cooldownSeconds) {
-      return;
-    }
 
     if (chatType === 'Group') {
       await sendAgainGroupInfo(db, chatId, chatInfo, BOT_TOKEN, API_BASE);
