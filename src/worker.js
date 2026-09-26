@@ -1,3 +1,5 @@
+const OWNER_USER_ID = 'u0IDvZ2084e83846b5024bd495b59114';
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -62,6 +64,7 @@ async function handleUpdate(update, env, request) {
   // StartedBot را معادل اولین /start در نظر می‌گیریم.
   const isStart = command === '/start' || update.type === 'StartedBot';
   const isAgain = command === '/again';
+  const isOwner = userId === OWNER_USER_ID;
 
   if (!isStart && !isAgain) return;
 
@@ -70,11 +73,12 @@ async function handleUpdate(update, env, request) {
 
     const state = await getRequestState(db, chatId);
 
-    // /start تکراری باید کاملاً بی‌پاسخ باشد؛ حتی API اطلاعات چت هم صدا زده نشود.
-    if (isStart && state) return;
+    // مالک ربات از محدودیت /start معاف است.
+    if (isStart && state && !isOwner) return;
 
-    // /again فقط برای چتی مجاز است که قبلاً /start شده باشد.
-    if (isAgain) {
+    // /again برای کاربران عادی فقط بعد از /start و پس از ۱۲ ساعت مجاز است.
+    // مالک ربات همیشه مجاز است.
+    if (isAgain && !isOwner) {
       if (!state) return;
 
       const now = Math.floor(Date.now() / 1000);
@@ -120,6 +124,11 @@ async function handleUpdate(update, env, request) {
       await sendAgainGroupInfo(db, chatId, chatInfo, BOT_TOKEN, API_BASE);
     } else {
       await sendAgainUserInfo(db, chatId, userId, BOT_TOKEN, API_BASE);
+    }
+
+    // اگر مالک بدون /start از /again استفاده کرد، وضعیت اولیه را هم ثبت کن.
+    if (!state) {
+      await createRequestState(db, chatId);
     }
 
     await markAgainRequest(db, chatId, now);
@@ -190,10 +199,7 @@ async function sendInitialUserInfo(db, chatId, userId, token, apiBase) {
   const firstName = chat.first_name || '';
   const lastName = chat.last_name || '';
   const usernameValue = chat.username || '';
-
-  if (!savedUserId) {
-    throw new Error('Rubika getChat returned no user_id.');
-  }
+  const bio = chat.bio || chat.about || '';
 
   await db.prepare(
     `INSERT OR REPLACE INTO users
@@ -216,14 +222,21 @@ async function sendInitialUserInfo(db, chatId, userId, token, apiBase) {
     ? `@${usernameValue.replace(/^@/, '')}`
     : 'ندارد';
 
-  const message =
-    `✅ اطلاعات شما:
+  const lines = [
+    '✅ اطلاعات کامل شما:',
+    '',
+    `👤 نام: ${fullName}`,
+    `🪪 نام کوچک: ${firstName || 'ثبت نشده'}`,
+    `🪪 نام خانوادگی: ${lastName || 'ثبت نشده'}`,
+    `📛 نام کاربری: ${username}`,
+    `🆔 شناسه کاربری: ${savedUserId}`
+  ];
 
-👤 نام: ${fullName}
-📛 نام کاربری: ${username}
-🆔 شناسه کاربری: ${savedUserId}`;
+  if (bio) {
+    lines.push(`📝 درباره من: ${bio}`);
+  }
 
-  const sent = await sendMessage(chatId, message, token, apiBase);
+  const sent = await sendMessage(chatId, lines.join('\n'), token, apiBase);
   if (!sent) throw new Error('Failed to send private user information.');
 }
 
@@ -239,10 +252,37 @@ async function sendInitialGroupInfo(db, chatId, chatInfo, token, apiBase) {
     freshGroupInfo.name ||
     'نام گروه ثبت نشده';
 
+  const usernameValue =
+    freshGroupInfo.username ||
+    freshGroupInfo.username_handle ||
+    '';
+
+  const description =
+    freshGroupInfo.description ||
+    freshGroupInfo.about ||
+    '';
+
+  const ownerId =
+    freshGroupInfo.owner_id ||
+    freshGroupInfo.owner_user_id ||
+    '';
+
   const memberCount =
     freshGroupInfo.member_count ??
     freshGroupInfo.members_count ??
-    0;
+    freshGroupInfo.count_members ??
+    freshGroupInfo.participants_count ??
+    null;
+
+  const link =
+    freshGroupInfo.link ||
+    freshGroupInfo.invite_link ||
+    '';
+
+  const isPublic =
+    typeof freshGroupInfo.is_public === 'boolean'
+      ? (freshGroupInfo.is_public ? 'بله' : 'خیر')
+      : '';
 
   await db.prepare(
     `INSERT OR REPLACE INTO groups
@@ -254,14 +294,26 @@ async function sendInitialGroupInfo(db, chatId, chatInfo, token, apiBase) {
     Number(memberCount) || 0
   ).run();
 
-  const message =
-    `✅ اطلاعات گروه:
+  const lines = [
+    '✅ اطلاعات کامل گروه:',
+    '',
+    `👥 نام گروه: ${title}`,
+    `🆔 شناسه گروه: ${chatId}`,
+    `🔗 نام کاربری: ${usernameValue ? '@' + usernameValue.replace(/^@/, '') : 'ندارد'}`,
+    `👤 تعداد اعضا: ${memberCount ?? 'نامشخص'}`,
+    `👑 شناسه مالک: ${ownerId || 'نامشخص'}`,
+    `🌐 عمومی: ${isPublic || 'نامشخص'}`
+  ];
 
-👥 نام گروه: ${title}
-🆔 شناسه گروه: ${chatId}
-👤 تعداد اعضا: ${Number(memberCount) || 0}`;
+  if (description) {
+    lines.push(`📝 توضیحات: ${description}`);
+  }
 
-  const sent = await sendMessage(chatId, message, token, apiBase);
+  if (link) {
+    lines.push(`🔗 لینک: ${link}`);
+  }
+
+  const sent = await sendMessage(chatId, lines.join('\n'), token, apiBase);
   if (!sent) throw new Error('Failed to send group information.');
 }
 
