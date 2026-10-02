@@ -1,5 +1,5 @@
 name = "userbotrubika"
-main = "src/worker.js"
+main = "src/index.js"
 compatibility_date = "2026-09-26"
 
 [[d1_databases]]
@@ -7,5 +7,11 @@ binding = "DB"
 database_name = "get-id-user"
 database_id = "196a6684-8031-4b55-b794-3acc0b933f77"
 
-[triggers] 
-crons = ["*/10 * * * *"]
+[vars]
+BOT_NAME = "RubikaProBot"
+DEFAULT_LANG = "fa"
+
+# Secrets:
+# BOT_TOKEN
+# OWNER_ID
+# WEBHOOK_SECRET
