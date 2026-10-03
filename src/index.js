@@ -1,6 +1,6 @@
 import { RubikaClient } from "./rubika/client.js";
 import { buildEvent } from "./core/session.js";
-import { isValidUpdate, isWebhookPathValid } from "./core/security.js";
+import { isValidUpdate, isWebhookPathValid, isOwner } from "./core/security.js";
 import { handleMessage } from "./handlers/message.js";
 import { handleCallback } from "./handlers/callback.js";
 import { logError } from "./core/db.js";
@@ -18,6 +18,10 @@ export default {
       return handleSetup(request, env);
     }
 
+    if (request.method === "GET" && url.pathname === "/debug-api") {
+      return handleDebugApi(request, env);
+    }
+
     if (request.method === "POST" && url.pathname.startsWith("/webhook/")) {
       return handleWebhook(request, env, ctx, url);
     }
@@ -27,8 +31,12 @@ export default {
 };
 
 async function handleWebhook(request, env, ctx, url) {
-  if (!env.BOT_TOKEN) return json({ status: "error", message: "BOT_TOKEN secret not configured" }, 500);
-  if (!isWebhookPathValid(env, url)) return json({ status: "error", message: "invalid webhook path" }, 403);
+  if (!env.BOT_TOKEN) {
+    return json({ status: "error", message: "BOT_TOKEN secret not configured" }, 500);
+  }
+  if (!isWebhookPathValid(env, url)) {
+    return json({ status: "error", message: "invalid webhook path" }, 403);
+  }
 
   let update;
   try {
@@ -37,7 +45,9 @@ async function handleWebhook(request, env, ctx, url) {
     return json({ status: "error", message: "invalid JSON" }, 400);
   }
 
-  if (!isValidUpdate(update)) return json({ status: "ignored" });
+  if (!isValidUpdate(update)) {
+    return json({ status: "ignored" });
+  }
 
   const msgTime = Number(update.new_message?.time || update.inline_message?.time || 0);
   if (msgTime && Date.now() / 1000 - msgTime > MAX_UPDATE_AGE_SEC) {
@@ -51,8 +61,11 @@ async function handleWebhook(request, env, ctx, url) {
 
   const work = (async () => {
     try {
-      if (event.kind === "message") await handleMessage(event);
-      else if (event.kind === "callback") await handleCallback(event);
+      if (event.kind === "message") {
+        await handleMessage(event);
+      } else if (event.kind === "callback") {
+        await handleCallback(event);
+      }
     } catch (err) {
       try {
         await logError(db, "webhook.dispatch", err?.stack || err?.message || String(err));
@@ -60,8 +73,11 @@ async function handleWebhook(request, env, ctx, url) {
     }
   })();
 
-  if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(work);
-  else await work;
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(work);
+  } else {
+    await work;
+  }
 
   return json({ status: "ok" });
 }
@@ -72,16 +88,59 @@ async function handleSetup(request, env) {
   if (!env.WEBHOOK_SECRET || key !== env.WEBHOOK_SECRET) {
     return json({ status: "error", message: "unauthorized: pass ?key=<WEBHOOK_SECRET>" }, 401);
   }
-  if (!env.BOT_TOKEN) return json({ status: "error", message: "BOT_TOKEN not configured" }, 500);
+  if (!env.BOT_TOKEN) {
+    return json({ status: "error", message: "BOT_TOKEN not configured" }, 500);
+  }
 
-  const webhookUrl = `${url.origin}/webhook/${env.WEBHOOK_SECRET}`;
+  const webhookUrl = url.origin + "/webhook/" + env.WEBHOOK_SECRET;
   const client = new RubikaClient(env.BOT_TOKEN);
+
   const results = {};
   for (const type of ["ReceiveUpdate", "ReceiveInlineMessage", "ReceiveQuery"]) {
-    try { results[type] = await client.updateBotEndpoint(webhookUrl, type); }
-    catch (err) { results[type] = { error: err.message }; }
+    try {
+      results[type] = await client.updateBotEndpoint(webhookUrl, type);
+    } catch (err) {
+      results[type] = { error: err.message };
+    }
   }
+
   return json({ status: "ok", webhook_url: webhookUrl, results });
+}
+
+async function handleDebugApi(request, env) {
+  const url = new URL(request.url);
+  const key = url.searchParams.get("key");
+  if (!env.WEBHOOK_SECRET || key !== env.WEBHOOK_SECRET) {
+    return json({ status: "error", message: "unauthorized: pass ?key=<WEBHOOK_SECRET>" }, 401);
+  }
+  if (!env.BOT_TOKEN) {
+    return json({ status: "error", message: "BOT_TOKEN not configured" }, 500);
+  }
+
+  const client = new RubikaClient(env.BOT_TOKEN);
+  const started = Date.now();
+
+  try {
+    await client.getMe();
+    return json({
+      status: "ok",
+      message: "Rubika API reachable and token accepted",
+      latency_ms: Date.now() - started,
+    });
+  } catch (err) {
+    return json(
+      {
+        status: "error",
+        message: "Rubika API call failed",
+        api_method: err.method || "getMe",
+        http_status: err.status ?? null,
+        content_type: err.contentType || "unknown",
+        detail: err.detail || err.message,
+        latency_ms: Date.now() - started,
+      },
+      502
+    );
+  }
 }
 
 function json(obj, status = 200) {
