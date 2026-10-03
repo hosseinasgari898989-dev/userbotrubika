@@ -1,4 +1,4 @@
-name = "userbotrubika"
+name = "userbotrubrika"
 main = "src/index.js"
 compatibility_date = "2026-09-26"
 
@@ -10,8 +10,9 @@ database_id = "196a6684-8031-4b55-b794-3acc0b933f77"
 [vars]
 BOT_NAME = "RubikaProBot"
 DEFAULT_LANG = "fa"
+PUBLIC_HOST = "userbotrubrika.hosseinasgari898989.workers.dev"
 
-# Secrets:
-# BOT_TOKEN
-# OWNER_ID
-# WEBHOOK_SECRET
+[triggers]
+crons = ["*/15 * * * *"]
+
+# Secrets: BOT_TOKEN, OWNER_ID, WEBHOOK_SECRET
