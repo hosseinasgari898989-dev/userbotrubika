@@ -19,6 +19,6 @@ export function isValidUpdate(update) {
   return true;
 }
 export function isWebhookPathValid(env, url) {
-  if (!env.WEBHOOK_SECRET) return true;
-  return url.pathname.endsWith(`/webhook/${env.WEBHOOK_SECRET}`);
+  if (!env.WEBHOOK_SECRET) return false;
+  return url.pathname === `/webhook/${env.WEBHOOK_SECRET}`;
 }
