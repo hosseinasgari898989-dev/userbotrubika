@@ -105,7 +105,13 @@ async function handleWebhook(request, env, ctx, url) {
   const client = new RubikaClient(env.BOT_TOKEN);
   const db = env.DB;
   const event = buildEvent(update, client, db, env);
-  if (!event) return json({ status: "ignored" });
+  if (!event) {
+    await logError(db, "webhook.unhandledUpdate", JSON.stringify({
+      updateType: typeof update?.type === "string" ? update.type : null,
+      updateKeys: update && typeof update === "object" ? Object.keys(update).slice(0, 12) : []
+    }));
+    return json({ status: "ignored", reason: "unsupported_update" });
+  }
   // Legacy Rubika endpoints have been observed calling /webhook and /webhook/inline.
   // Accept these paths for compatibility, but never grant owner privileges without the secret path.
   if (!trustedWebhookPath) event.isOwnerFlag = false;
@@ -122,33 +128,44 @@ async function handleWebhook(request, env, ctx, url) {
 }
 
 function normalizeRubikaUpdate(payload) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
 
   const source = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
     ? { ...payload, ...payload.data }
     : payload;
 
-  const wrapped = source.update && typeof source.update === "object" ? source.update : null;
-  if (wrapped) return { ...source, ...wrapped };
+  // Rubika can wrap NewMessage in an outer "update" object.
+  if (source.update && typeof source.update === "object") {
+    const nested = source.update;
+    const merged = {
+      ...nested,
+      chat_id: nested.chat_id || source.chat_id || source.data?.chat_id
+    };
+    const normalizedNested = normalizeRubikaUpdate(merged);
+    if (normalizedNested?.type && normalizedNested.type !== source.type) return normalizedNested;
+    if (normalizedNested?.type) return normalizedNested;
+  }
 
-  if (typeof source.type === "string") return source;
-
+  // Rubika's ReceiveUpdate examples use inline_message at the root.
+  // Commands must be treated as messages even if aux_data contains a button id.
   if (source.inline_message && typeof source.inline_message === "object") {
     const inline = source.inline_message;
-    // Rubika can send ordinary text messages in the top-level inline_message envelope.
-    // Only treat it as a button callback when a real button_id is present.
     const text = typeof inline.text === "string" ? inline.text.trim() : "";
     if (inline.aux_data?.button_id && !text.startsWith("/")) {
       return { type: "ReceiveQuery", inline_message: inline };
     }
-    return { type: "NewMessage", chat_id: inline.chat_id, new_message: inline };
+    return { type: "NewMessage", chat_id: inline.chat_id || source.chat_id, new_message: inline };
   }
 
-  if (source.new_message && typeof source.new_message === "object" && source.chat_id) {
-    return { ...source, type: "NewMessage" };
+  if (source.new_message && typeof source.new_message === "object" && (source.chat_id || source.update?.chat_id)) {
+    return { ...source, type: "NewMessage", chat_id: source.chat_id || source.update?.chat_id };
   }
 
-  return source;
+  if (source.type === "NewMessage" && source.new_message && source.chat_id) return source;
+  if (source.type === "ReceiveQuery" && source.inline_message) return source;
+  if (typeof source.type === "string" && !["ReceiveUpdate", "ReceiveInlineMessage"].includes(source.type)) return source;
+
+  return null;
 }
 
 async function handleSetup(request, env) {
