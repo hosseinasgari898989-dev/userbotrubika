@@ -82,11 +82,26 @@ async function handleWebhook(request, env, ctx, url) {
   const trustedWebhookPath = isWebhookPathValid(env, url);
   const legacyWebhookPath = url.pathname === "/webhook" || url.pathname === "/webhook/inline" || url.pathname === "/webhook/query";
   if (!trustedWebhookPath && !legacyWebhookPath) return json({ status: "error", message: "invalid webhook path" }, 403);
-  let update;
-  try { update = await request.json(); } catch { return json({ status: "error", message: "invalid JSON" }, 400); }
-  if (!isValidUpdate(update)) return json({ status: "ignored" });
+  let payload;
+  try { payload = await request.json(); } catch { return json({ status: "error", message: "invalid JSON" }, 400); }
+
+  // Rubika commonly wraps message events as { "update": { ... } }, while
+  // inline button events may arrive as { "inline_message": { ... } }.
+  const update = normalizeRubikaUpdate(payload);
+  if (!isValidUpdate(update)) {
+    // Record only structural metadata; never log message text, chat IDs, or tokens.
+    await logError(env.DB, "webhook.invalidUpdate", JSON.stringify({
+      payloadKeys: payload && typeof payload === "object" ? Object.keys(payload).slice(0, 12) : [],
+      normalizedKeys: update && typeof update === "object" ? Object.keys(update).slice(0, 12) : [],
+      updateType: typeof update?.type === "string" ? update.type : null
+    }));
+    return json({ status: "ignored", reason: "invalid_update" });
+  }
   const msgTime = Number(update.new_message?.time || update.inline_message?.time || 0);
-  if (msgTime && Date.now() / 1000 - msgTime > MAX_UPDATE_AGE_SEC) return json({ status: "ignored_stale" });
+  if (msgTime && Date.now() / 1000 - msgTime > MAX_UPDATE_AGE_SEC) {
+    await logError(env.DB, "webhook.staleUpdate", JSON.stringify({ updateType: update.type, ageSec: Math.floor(Date.now() / 1000 - msgTime) }));
+    return json({ status: "ignored_stale" });
+  }
   const client = new RubikaClient(env.BOT_TOKEN);
   const db = env.DB;
   const event = buildEvent(update, client, db, env);
@@ -104,6 +119,29 @@ async function handleWebhook(request, env, ctx, url) {
   })();
   if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(work); else await work;
   return json({ status: "ok" });
+}
+
+function normalizeRubikaUpdate(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+
+  const source = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+    ? { ...payload, ...payload.data }
+    : payload;
+
+  const wrapped = source.update && typeof source.update === "object" ? source.update : null;
+  if (wrapped) return { ...source, ...wrapped };
+
+  if (typeof source.type === "string") return source;
+
+  if (source.inline_message && typeof source.inline_message === "object") {
+    return { type: "ReceiveQuery", inline_message: source.inline_message };
+  }
+
+  if (source.new_message && typeof source.new_message === "object" && source.chat_id) {
+    return { ...source, type: "NewMessage" };
+  }
+
+  return source;
 }
 
 async function handleSetup(request, env) {
