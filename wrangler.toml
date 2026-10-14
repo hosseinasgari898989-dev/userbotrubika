@@ -1,4 +1,4 @@
-name = "userbotrubrika"
+name = "userbotrubika"
 main = "src/index.js"
 compatibility_date = "2026-09-26"
 
@@ -10,7 +10,7 @@ database_id = "196a6684-8031-4b55-b794-3acc0b933f77"
 [vars]
 BOT_NAME = "RubikaProBot"
 DEFAULT_LANG = "fa"
-PUBLIC_HOST = "userbotrubrika.hosseinasgari898989.workers.dev"
+PUBLIC_HOST = "userbotrubika.hosseinasgari898989.workers.dev"
 
 [triggers]
 crons = ["*/15 * * * *"]
