@@ -127,7 +127,7 @@ async function handleWebhook(request, env, ctx, url) {
   return json({ status: "ok" });
 }
 
-function normalizeRubikaUpdate(payload) {
+export function normalizeRubikaUpdate(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
 
   const source = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
