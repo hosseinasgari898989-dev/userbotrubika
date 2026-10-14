@@ -32,7 +32,7 @@ export async function renderPage({ client, db, chat_id, menu, rawText, inlineKey
   return { edited: false, message_id };
 }
 
-function extractMessageId(response) {
+export function extractMessageId(response) {
   const candidates = [
     response?.data?.message_id,
     response?.message_id,
