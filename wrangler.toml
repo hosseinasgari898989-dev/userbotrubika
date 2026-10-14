@@ -4,8 +4,8 @@ compatibility_date = "2026-09-26"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "get-id-user"
-database_id = "196a6684-8031-4b55-b794-3acc0b933f77"
+database_name = "userbotrubika-db"
+database_id = "c182b67b-5a23-45ca-87b9-34e78009b52a"
 
 [vars]
 BOT_NAME = "RubikaProBot"
