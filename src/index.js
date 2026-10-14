@@ -134,7 +134,13 @@ function normalizeRubikaUpdate(payload) {
   if (typeof source.type === "string") return source;
 
   if (source.inline_message && typeof source.inline_message === "object") {
-    return { type: "ReceiveQuery", inline_message: source.inline_message };
+    const inline = source.inline_message;
+    // Rubika can send ordinary text messages in the top-level inline_message envelope.
+    // Only treat it as a button callback when a real button_id is present.
+    if (inline.aux_data?.button_id) {
+      return { type: "ReceiveQuery", inline_message: inline };
+    }
+    return { type: "NewMessage", chat_id: inline.chat_id, new_message: inline };
   }
 
   if (source.new_message && typeof source.new_message === "object" && source.chat_id) {
