@@ -137,7 +137,8 @@ function normalizeRubikaUpdate(payload) {
     const inline = source.inline_message;
     // Rubika can send ordinary text messages in the top-level inline_message envelope.
     // Only treat it as a button callback when a real button_id is present.
-    if (inline.aux_data?.button_id) {
+    const text = typeof inline.text === "string" ? inline.text.trim() : "";
+    if (inline.aux_data?.button_id && !text.startsWith("/")) {
       return { type: "ReceiveQuery", inline_message: inline };
     }
     return { type: "NewMessage", chat_id: inline.chat_id, new_message: inline };
