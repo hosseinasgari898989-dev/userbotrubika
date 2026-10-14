@@ -23,28 +23,54 @@ export default {
   },
 };
 
+// Keep retrying on scheduled runs until all three webhook types are accepted.
+// An earlier version marked the task as complete before registering endpoints.
 async function runRecoveryCheck(env) {
   const db = env.DB;
   if (!env.BOT_TOKEN || !db) return;
+
   const alreadyDone = await getSetting(db, MONITOR_FLAG_KEY, "0");
   if (alreadyDone === "1") return;
+
   const client = new RubikaClient(env.BOT_TOKEN);
-  try { await client.getMe(); } catch { return; }
-  await setSetting(db, MONITOR_FLAG_KEY, "1");
+  try {
+    await client.getMe();
+  } catch (err) {
+    await logError(db, "scheduled.apiHealth", err?.message || String(err));
+    return;
+  }
+
+  // Recover gracefully if the old misspelled value remains in the deployed binding.
+  const publicHost = env.PUBLIC_HOST === "userbotrubrika.hosseinasgari898989.workers.dev"
+    ? "userbotrubika.hosseinasgari898989.workers.dev"
+    : env.PUBLIC_HOST;
+
+  if (!env.WEBHOOK_SECRET || !publicHost) {
+    await logError(db, "scheduled.autoSetup", "WEBHOOK_SECRET or PUBLIC_HOST is not configured");
+    return;
+  }
+
+  const webhookUrl = "https://" + publicHost + "/webhook/" + env.WEBHOOK_SECRET;
   let webhookOk = true;
-  if (env.WEBHOOK_SECRET && env.PUBLIC_HOST) {
-    const webhookUrl = "https://" + env.PUBLIC_HOST + "/webhook/" + env.WEBHOOK_SECRET;
-    for (const type of ["ReceiveUpdate", "ReceiveInlineMessage", "ReceiveQuery"]) {
-      try { await client.updateBotEndpoint(webhookUrl, type); }
-      catch (err) { webhookOk = false; await logError(db, "scheduled.autoSetup", err?.message || String(err)); }
+  for (const type of ["ReceiveUpdate", "ReceiveInlineMessage", "ReceiveQuery"]) {
+    try {
+      await client.updateBotEndpoint(webhookUrl, type);
+    } catch (err) {
+      webhookOk = false;
+      await logError(db, "scheduled.autoSetup", err?.message || String(err));
     }
-  } else { webhookOk = false; }
+  }
+
+  if (!webhookOk) return;
+
+  // Only remember success after every endpoint registration succeeded.
+  await setSetting(db, MONITOR_FLAG_KEY, "1");
   if (env.OWNER_ID) {
     try {
-      const msg = webhookOk
-        ? "✅ Rubika API برگشت و webhook به‌صورت خودکار دوباره ثبت شد. ربات الان باید فعال باشد — /start را امتحان کنید."
-        : "✅ Rubika API برگشت، ولی ثبت خودکار webhook ناموفق بود یا WEBHOOK_SECRET/PUBLIC_HOST تنظیم نیست. تنظیمات را بررسی کنید.";
-      await client.sendMessage(env.OWNER_ID, msg);
+      await client.sendMessage(
+        env.OWNER_ID,
+        "✅ اتصال API روبیکا برقرار شد و هر سه Webhook با موفقیت ثبت شدند. حالا /start را امتحان کن."
+      );
     } catch (err) {
       await logError(db, "scheduled.notifyOwner", err?.message || String(err));
     }
