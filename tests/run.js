@@ -3,6 +3,8 @@ import { CallbackRouter } from "../src/core/router.js";
 import { chatTypeFromId, isOwner, isValidUpdate } from "../src/core/security.js";
 import { fmtDuration } from "../src/utils/text.js";
 import { row, inlineKeypad, btnSimple } from "../src/rubika/keypad.js";
+import { normalizeRubikaUpdate } from "../src/index.js";
+import { extractMessageId } from "../src/core/render.js";
 
 let pass = 0;
 let fail = 0;
@@ -35,6 +37,32 @@ assert(!isValidUpdate({ type:"NewMessage" }), "invalid NewMessage");
 assert(isValidUpdate({ type:"ReceiveQuery", inline_message:{} }), "valid ReceiveQuery");
 assert(!isValidUpdate({}), "empty invalid");
 assert(!isValidUpdate(null), "null invalid");
+
+assertEqual(
+  normalizeRubikaUpdate({ update: { type: "NewMessage", chat_id: "b1", new_message: { text: "/start" } } }),
+  { type: "NewMessage", chat_id: "b1", new_message: { text: "/start" } },
+  "normalize nested Rubika NewMessage"
+);
+assertEqual(
+  normalizeRubikaUpdate({ inline_message: { chat_id: "b1", text: "/start", aux_data: { button_id: "x" } } }),
+  { type: "NewMessage", chat_id: "b1", new_message: { chat_id: "b1", text: "/start", aux_data: { button_id: "x" } } },
+  "slash command wins over inline button metadata"
+);
+assertEqual(
+  normalizeRubikaUpdate({ inline_message: { chat_id: "b1", text: "Tools", aux_data: { button_id: "tools.open" } } }),
+  { type: "ReceiveQuery", inline_message: { chat_id: "b1", text: "Tools", aux_data: { button_id: "tools.open" } } },
+  "normalize inline button callback"
+);
+assertEqual(
+  normalizeRubikaUpdate({ type: "ReceiveUpdate", inline_message: { chat_id: "b1", text: "/start" } }),
+  { type: "NewMessage", chat_id: "b1", new_message: { chat_id: "b1", text: "/start" } },
+  "normalize endpoint wrapper with inline message"
+);
+assertEqual(extractMessageId({ data: { message_id: "m1" } }), "m1", "message id in data");
+assertEqual(extractMessageId({ message_id: 123 }), "123", "top-level numeric message id");
+assertEqual(extractMessageId({ result: { data: { message_id: "m2" } } }), "m2", "nested result message id");
+assertEqual(extractMessageId({ status: "OK", data: {} }), null, "missing message id safely handled");
+
 
 assertEqual(fmtDuration(5*60*1000), "5 دقیقه", "duration minutes");
 assertEqual(fmtDuration(2*60*60*1000 + 30*60*1000), "2 ساعت و 30 دقیقه", "duration hours");
