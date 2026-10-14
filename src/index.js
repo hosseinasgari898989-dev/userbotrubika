@@ -14,7 +14,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/") return json({ status: "ok", service: "rubika-bot", time: new Date().toISOString() });
     if (request.method === "GET" && url.pathname === "/setup") return handleSetup(request, env);
     if (request.method === "GET" && url.pathname === "/debug-api") return handleDebugApi(request, env);
-    if (request.method === "POST" && url.pathname.startsWith("/webhook/")) return handleWebhook(request, env, ctx, url);
+    if (request.method === "POST" && (url.pathname === "/webhook" || url.pathname.startsWith("/webhook/"))) return handleWebhook(request, env, ctx, url);
     return json({ status: "not_found" }, 404);
   },
 
@@ -79,7 +79,9 @@ async function runRecoveryCheck(env) {
 
 async function handleWebhook(request, env, ctx, url) {
   if (!env.BOT_TOKEN) return json({ status: "error", message: "BOT_TOKEN secret not configured" }, 500);
-  if (!isWebhookPathValid(env, url)) return json({ status: "error", message: "invalid webhook path" }, 403);
+  const trustedWebhookPath = isWebhookPathValid(env, url);
+  const legacyWebhookPath = url.pathname === "/webhook" || url.pathname === "/webhook/inline" || url.pathname === "/webhook/query";
+  if (!trustedWebhookPath && !legacyWebhookPath) return json({ status: "error", message: "invalid webhook path" }, 403);
   let update;
   try { update = await request.json(); } catch { return json({ status: "error", message: "invalid JSON" }, 400); }
   if (!isValidUpdate(update)) return json({ status: "ignored" });
@@ -89,6 +91,9 @@ async function handleWebhook(request, env, ctx, url) {
   const db = env.DB;
   const event = buildEvent(update, client, db, env);
   if (!event) return json({ status: "ignored" });
+  // Legacy Rubika endpoints have been observed calling /webhook and /webhook/inline.
+  // Accept these paths for compatibility, but never grant owner privileges without the secret path.
+  if (!trustedWebhookPath) event.isOwnerFlag = false;
   const work = (async () => {
     try {
       if (event.kind === "message") await handleMessage(event);
